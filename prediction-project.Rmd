@@ -1,0 +1,194 @@
+---
+title: "Prediction Assignment - Practical Machine Learning"
+author: "Per Rynning"
+date: "19 mai 2016"
+output: html_document
+---
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: <http://groupware.les.inf.puc-rio.br/har> 
+
+The required R packages to reproduce this analysis are:
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+library(knitr)
+library(caret)
+library(doParallel)
+registerDoParallel()
+```
+
+### Data
+
+The training data for this project are available here:
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv>
+
+The test data are available here:
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv>
+
+Unless the data is available in the current working directory, the files will be automaticallt downloaded.
+
+```{r}
+
+## Downloads training data if not available in the current folder
+if(!file.exists("pml-training.csv")){
+    download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", 
+                  destfile = "pml-training.csv")
+    
+}
+
+## Downloads testing data if not available in the current folder
+if(!file.exists("pml-testing.csv")){
+    download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", 
+                  destfile = "pml-testing.csv")
+    
+}
+
+```
+
+The data was downloaded 19.05.2016 - 09:50. The data may change in the future.
+
+We'll read the training and testing datasets. We will however refer to to test data as validation data from this point on, as we will pick out some additional testing data from the training data.
+
+``` {r readfiles }
+
+training <- read.csv(file = "pml-training.csv", header = TRUE)
+
+validation <- read.csv(file = "pml-testing.csv", header = TRUE)
+
+```
+
+##Exploratory Data Analysis
+
+``` {r dataexplore}
+
+str(training)
+
+str(validation)
+
+```
+
+Let's have a look at the training data and see if there are any Zero, or Near-zero covariates:
+
+``` {r nzvs}
+
+nzv <- nearZeroVar(training, 
+                   saveMetrics=TRUE)
+nzv
+
+```
+
+##Data Processing
+
+###Near Zero Values
+From the nzv column above we can see that there are several variables that we want to throw out, as these are not useful when we want to construct our prediction model.
+
+We'll also remove the same variables from the test data.
+
+``` {r nzvs_remove}
+training.noNZV <- training[,!nzv$nzv]
+
+validation.noNZV <- validation[,!nzv$nzv]
+
+```
+
+###Unnecessary columns
+From looking at the 6 first column names of the training set, we can see that there is data that we'd like to exclude. 
+
+``` {r unnecessary_cols}
+
+names(training.noNZV[,1:6])
+names(validation.noNZV[,1:6])
+
+```
+This data is probably important for analysing other things, but may adversely affect our prediction model. Away they go!
+
+``` {r unnecessary_cols2}
+
+training.noNZV <- training.noNZV[,-c(1:6)]
+validation.noNZV <- validation.noNZV[,-c(1:6)]
+
+```
+
+###High NA columns
+From briefly looking at the data earlier, we could see that there may be a lot of NAs in the data. We will exclude any column that has >70% NAs from both the training and validation sets.
+
+```{r removeNAs}
+# Finds columns where NAs account for more than 70%
+manyNAs <- colMeans(is.na(training.noNZV))>.70
+
+training.noNZV.NAred <- training.noNZV[,!manyNAs]
+validation.noNZV.NAred <- validation.noNZV[,!manyNAs]
+
+```
+
+###Splitting the data into training- and testing datasets
+As mentioned earlier, we will separate out a portion of the training data as a test-set. This is because we want to be able to measure how accurate our model is. This will be hard to do with a test dataset with only 20 entries. We will use 70% of the data for training, and the remaining 30% for testing.
+
+``` {r splitdata}
+
+inTrain <- createDataPartition(y=training.noNZV.NAred$classe, 
+                               p=0.7, 
+                               list=FALSE)
+
+# We'll call the datasets .ready, as they are ready to be used in the training process
+training.ready <- training.noNZV.NAred[inTrain,]
+testing.ready <- training.noNZV.NAred[-inTrain,]
+
+```
+
+#Prediction models
+
+##Prediction with trees
+The first model we'll create is a general tree. 
+
+```{r rpartmodel}
+
+rpart.model <- train(classe ~., 
+                     data=training.ready, 
+                     method="rpart")
+
+```
+
+Let's see how accurate this model is by testing it versus the testing dataset we separated out:
+
+```{r conf_mat_rpart}
+
+confusionMatrix(testing.ready$classe, 
+                predict(rpart.model,
+                        testing.ready))
+
+```
+
+49.2% accuracy... Worse than a coin toss. We'll have to do better than that!
+
+##Random forest
+The second model we'll create is a random forest model.
+
+``` {r rfmodel}
+
+rf.model <- train(classe ~., 
+                  data=training.ready, 
+                  method="rf")
+
+```
+
+Let's have a look at how accurate this model is:
+
+```{r conf_mat_rf}
+
+confusionMatrix(testing.ready$classe, 
+                predict(rf.model,
+                        testing.ready))
+
+```
+
+99.2% accuracy seems acceptable. Let's use this model to find the actions from the validation dataset:
+
+```{r validation}
+
+predict(rf.model, 
+        validation.noNZV.NAred)
+
+```
